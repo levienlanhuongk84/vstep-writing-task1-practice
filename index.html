@@ -1451,7 +1451,9 @@ function applySettings() {
   if ($('#type-pick').childElementCount || $('#f-sid').value) renderPicker();
   if ($('#admin-assign') && isAdmin() && !ASG_DIRTY) fillAssign();
 }
-async function refreshSettings() { try { const j = await api('settings'); if (j.ok && j.settings) { SET = Object.assign({}, DEFAULT_SET, j.settings); store.set('settings', SET); applySettings(); } } catch (e) {} }
+let SET_READY = !CONFIG.API_URL || !!store.get('settingsAt', 0);   // a first visit must wait for the class settings (assignments) before START
+async function refreshSettings() { try { const j = await api('settings'); if (j.ok && j.settings) { SET = Object.assign({}, DEFAULT_SET, j.settings); store.set('settings', SET); store.set('settingsAt', Date.now()); SET_READY = true; applySettings(); return; } } catch (e) {}
+  if (CONFIG.API_URL) setTimeout(refreshSettings, SET_READY ? 60000 : 6000 + Math.random() * 6000); }
 
 /* ====================== PRACTICE STATE ====================== */
 const freshState = () => ({ step: 0, ans: {}, first: {}, checked: {}, notes: ['', '', ''], text: '', tSec: 0, tRun: 0, submitted: null });
@@ -1490,6 +1492,7 @@ let SEL = store.get('sel', '');       // prompt chosen on the start card
 let VIEW = store.get('view', 'start'); // 'start' | 'work'
 let CURT = store.get('curt', '');
 function renderPicker() {
+  if (!SET_READY) { $('#type-pick').innerHTML = '<p class="muted" style="grid-column:1/-1">Loading the class settings…</p>'; $('#pick-summary').textContent = ''; $('#btn-start').disabled = true; return; }
   const asg = curAsg(), allow = allowedIds(asg);
   if (asg === 'closed') {
     $('#type-pick').innerHTML = `<div class="note bad" style="grid-column:1/-1"><span class="tag">Not assigned</span><p>${$('#f-sid').value.trim() ? 'This practice is not assigned to your Class / ID. Check the code with your teacher.' : 'Type your Class / ID to see the prompts assigned to your class.'}</p></div>`;
@@ -1683,22 +1686,28 @@ async function submitPrompt(T, auto) {
   if (auto && !$('#rv-modal').hidden) closeReview();
   openMachine(entry);
   if (auto) $('#rv-sub').textContent = 'Time is up – your email was submitted automatically. ' + $('#rv-sub').textContent;
-  flushQueue();
+  if (auto) { setSendNote(clientId, null); scheduleFlush(Math.random() * 25000); } else flushQueue();   // time-up bursts: spread the sends over 25 s
 }
-let flushing = false;
+let flushing = false, flushTimer = null, flushRound = 0;
+function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flushQueue, ms); }
 async function flushQueue() {
   if (flushing) return; flushing = true;
+  let left = 0;
   try {
     for (const m of mineList().filter(x => x.pending)) {
-      let ok = false; try { const j = await api('submit', m.pending); ok = !!(j && j.ok); } catch (e) {}
-      if (ok) { const L = mineList(); const x = L.find(y => y.clientId === m.clientId); if (x) { delete x.pending; store.set('mine', L); } }
+      setSendNote(m.clientId, null);
+      let ok = false; try { const j = await api('submit', m.pending); ok = !!(j && j.ok); } catch (e) {}   // under load Google may lose the reply after the row is written: the resend is then answered "duplicate" = ok
+      if (ok) { const L = mineList(); const x = L.find(y => y.clientId === m.clientId); if (x) { delete x.pending; store.set('mine', L); } } else left++;
       setSendNote(m.clientId, ok);
     }
   } finally { flushing = false; }
+  if (left && CONFIG.API_URL) { flushRound++; scheduleFlush(Math.min(90000, 12000 * flushRound) + Math.random() * 15000); }   // keep trying while the page is open
+  else flushRound = 0;
 }
 function setSendNote(clientId, ok) {
-  const el = $('#rv-send'); if (el && el.dataset.cid === clientId) { el.className = 'status ' + (ok ? 'ok' : 'err'); el.hidden = false; el.lastElementChild.textContent = ok ? (CONFIG.API_URL ? 'Saved to the class sheet. Your teacher will review it.' : 'Saved on this device (the class sheet is not connected in this copy).') : 'Could not reach the class sheet – your email is kept on this device and will be sent automatically when you are back online.'; }
-  TYPES.forEach(T => { const s = CUR[T.id] && st(CUR[T.id]); if (s && s.submitted && s.submitted.clientId === clientId) { const e2 = $('#sendst-' + T.id); if (e2) e2.textContent = ok ? '' : 'Not yet in the class sheet – it will be sent when you are online.'; } });
+  const msg = ok === null ? 'Saving to the class sheet… you can keep working; please do not clear this browser.' : ok ? (CONFIG.API_URL ? 'Saved to the class sheet. Your teacher will review it.' : 'Saved on this device (the class sheet is not connected in this copy).') : 'The class sheet is busy – your email is safe on this device and is being sent again automatically. You can close the page; it is also resent the next time you open it.';
+  const el = $('#rv-send'); if (el && el.dataset.cid === clientId) { el.className = 'status ' + (ok ? 'ok' : ok === null ? '' : 'err'); el.hidden = false; el.lastElementChild.textContent = msg; }
+  TYPES.forEach(T => { const s = CUR[T.id] && st(CUR[T.id]); if (s && s.submitted && s.submitted.clientId === clientId) { const e2 = $('#sendst-' + T.id); if (e2) e2.textContent = ok ? '' : ok === null ? 'Saving to the class sheet…' : 'Not yet in the class sheet – it is being resent automatically.'; } });
 }
 window.addEventListener('online', flushQueue);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') flushQueue(); });

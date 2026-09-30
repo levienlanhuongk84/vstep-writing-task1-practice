@@ -732,6 +732,22 @@
     .ws-bar .steps button:not(.cur) { padding-right: 6px; }
     .ws-peek .prompt { padding: 10px 14px 12px; }
   }
+  /* the task points stay visible in the sticky bar; tap = whole prompt */
+  .ws-brief { position: relative; margin-top: 6px; padding: 7px 34px 7px 12px; border: 1.5px solid var(--purple); border-left-width: 4px; border-radius: 10px; background: var(--purple-soft); color: var(--ink); font-size: .86em; line-height: 1.38; cursor: pointer; }
+  .ws-brief .bi { font-weight: 700; color: var(--purple-ink); }
+  .ws-brief ol { margin: 2px 0 0; padding-left: 1.3em; }
+  .ws-brief ol li { margin: 0; }
+  .ws-brief ol li::marker { color: var(--orange); font-weight: 700; }
+  .ws-brief .bl { display: none; gap: 4px 12px; flex-wrap: wrap; font-family: var(--font-cond); font-weight: 700; color: var(--purple-ink); }
+  .ws-brief .bl b { color: #fff; background: var(--purple); border-radius: 5px; padding: 0 6px; }
+  .ws-brief.min .bi, .ws-brief.min ol { display: none; }
+  .ws-brief.min .bl { display: flex; }
+  .brief-tg { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--purple-ink); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  @media (max-width: 640px) {
+    .ws-brief { font-size: .8em; }
+    .ws-bar.typing .ws-brief .bi, .ws-bar.typing .ws-brief ol { display: none; }
+    .ws-bar.typing .ws-brief .bl { display: flex; }
+  }
 
   /* ===== LH Master Hero — background art taken from the approved mock (logo, glow, ribbons fixed); only eyebrow / title / 3 chips change.
      Geometry measured on the mock at 1997×277 px: 1 mock px = 0.050075cqw. ===== */
@@ -1571,9 +1587,11 @@ function renderWs(T) {
   const id = CUR[T], box = $('#ws-' + T); if (!id || !PROMPTS[id]) return;
   const p = PROMPTS[id], s = st(id);
   const u = me(); $('#' + T + '-work-h').textContent = 'Prompt ' + id + ' · ' + p.title; $('#' + T + '-who').textContent = u.name + ' · ' + u.sid;
-  box.innerHTML = `<div class="ws-prompt">${promptHtml(p)}</div>
-    <div class="ws-bar"><div class="ws-bar-row"><button type="button" class="peek-btn" data-peek="${T}" aria-expanded="false"><span class="ic">📄</span>${esc(id)} <span class="car">▾</span></button><div class="steps" role="tablist">${STEPS.map((x, i) => `<button type="button" data-step="${i}" data-pid="${id}"><span class="n">${i + 1}</span><span class="l">${esc(x.t)}</span></button>`).join('')}</div><span class="bar-tmr" id="btmr-${T}" hidden></span></div>
-    <div class="ws-peek" id="peek-${T}" hidden>${promptHtml(p)}</div></div><div class="stp" id="stp-${T}"></div>`;
+  box.innerHTML = `<div class="ws-bar"><div class="ws-bar-row"><button type="button" class="peek-btn" data-peek="${T}" aria-expanded="false"><span class="ic">📄</span>${esc(id)} <span class="car">▾</span></button><div class="steps" role="tablist">${STEPS.map((x, i) => `<button type="button" data-step="${i}" data-pid="${id}"><span class="n">${i + 1}</span><span class="l">${esc(x.t)}</span></button>`).join('')}</div><span class="bar-tmr" id="btmr-${T}" hidden></span></div>
+    <div class="ws-brief${store.get('briefMin', false) ? ' min' : ''}" data-peek="${T}" title="Tap to see the whole prompt"><button type="button" class="brief-tg" data-brief aria-label="Shrink or expand the task points">${store.get('briefMin', false) ? '▾' : '▴'}</button>
+      <div class="bi">${esc(p.instruction)}</div><ol>${p.points.map(x => `<li>${esc(x.replace(/[,;.]?\s*(and)?\s*$/, ''))}</li>`).join('')}</ol>
+      <div class="bl"><b>${esc(id)}</b>${p.labels.map((l, j) => `<span>${j + 1}. ${esc(l)}</span>`).join('')}</div></div>
+    <div class="ws-peek" id="peek-${T}" hidden>${promptHtml(p)}</div></div><div class="ws-prompt">${promptHtml(p)}</div><div class="stp" id="stp-${T}"></div>`;
   paintSteps(T); renderStep(T);
 }
 /* sticky prompt bar: keeps the prompt one tap away on every step (phones scroll the full prompt out of view) */
@@ -1584,9 +1602,14 @@ function peek(T, open) {
   pn.hidden = !open; b.setAttribute('aria-expanded', open); b.classList.toggle('on', open);
 }
 document.addEventListener('click', e => {
+  const tg = e.target.closest('[data-brief]');
+  if (tg) { const min = !store.get('briefMin', false); store.set('briefMin', min); $$('.ws-brief').forEach(x => x.classList.toggle('min', min)); $$('[data-brief]').forEach(x => x.textContent = min ? '▾' : '▴'); return; }
   const b = e.target.closest('[data-peek]'); if (b) { const T = b.dataset.peek; peek(T, $('#peek-' + T).hidden); return; }
   $$('.ws-peek:not([hidden])').forEach(pn => { if (!pn.closest('.ws-bar').contains(e.target)) peek(pn.id.slice(5), false); });
 });
+// while typing on a phone the keyboard takes half the screen: the brief shrinks to one line of labels
+document.addEventListener('focusin', e => { const w = e.target.closest && e.target.closest('.tpane'); if (w && e.target.matches('textarea')) $$('.ws-bar', w).forEach(x => x.classList.add('typing')); });
+document.addEventListener('focusout', e => { if (e.target.matches && e.target.matches('textarea')) $$('.ws-bar').forEach(x => x.classList.remove('typing')); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $$('.ws-peek:not([hidden])').forEach(pn => peek(pn.id.slice(5), false)); });
 function paintSteps(T) {
   const id = CUR[T], s = st(id);

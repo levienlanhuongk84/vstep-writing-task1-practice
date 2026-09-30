@@ -765,7 +765,7 @@
     background: linear-gradient(180deg, rgba(206,168,246,.36), rgba(160,110,225,.26)); border: calc(1.6 * var(--u)) solid rgba(206,170,246,.72);
     box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 0 calc(10 * var(--u)) rgba(190,140,245,.18); }
   @media (max-width: 760px) {
-    .lh-hero { aspect-ratio: auto; min-height: 196px; background-size: auto 196px; background-position: -185px 0; background-color: #3A1766; padding: 18px 14px 18px 142px; }
+    .lh-hero { aspect-ratio: auto; min-height: 196px; background-size: auto max(196px, 100%); background-position: calc(18.03% - 18.03vw + 70px) 0; background-color: #3A1766; padding: 18px 14px 18px 142px; }
     .lh-hero .lh-logo { left: 4px; top: 38px; width: 133px; }
     .lh-hero .lh-slot { position: static; height: auto; }
     .lh-hero .lh-eyebrow, .lh-hero .lh-title, .lh-hero .lh-chips { position: static; }
@@ -775,7 +775,7 @@
     .lh-hero .lh-chips span { height: auto; padding: 5px 10px; font-size: 11.5px; line-height: 1.25; border-width: 1px; }
   }
   @media (max-width: 360px) {
-    .lh-hero { padding-left: 118px; padding-right: 10px; background-position: -195px 0; }
+    .lh-hero { padding-left: 118px; padding-right: 10px; background-position: calc(18.03% - 18.03vw + 60px) 0; }
     .lh-hero .lh-logo { width: 112px; top: 44px; }
     .lh-hero .lh-title { font-size: 21px; }
     .lh-hero .lh-chips { gap: 5px; }

@@ -1402,12 +1402,15 @@ async function api(action, payload) {
   const auth = A ? { user: A.name, password: A.password } : {};
   const tid = encodeURIComponent(CONFIG.TEST_ID);
   if (action === 'list' || action === 'settings' || action === 'feedback') {
-    const res = await fetch(CONFIG.API_URL + '?action=' + action + '&test=' + tid + (payload.keys ? '&keys=' + encodeURIComponent(payload.keys) : '') + '&_=' + Date.now(), { redirect: 'follow' });
-    return res.json();
+    for (let i = 0; ; i++) {        // Google's web-app front end now and then answers with an HTML error page: try again
+      try { const res = await fetch(CONFIG.API_URL + '?action=' + action + '&test=' + tid + (payload.keys ? '&keys=' + encodeURIComponent(payload.keys) : '') + '&_=' + Date.now(), { redirect: 'follow' }); return await res.json(); }
+      catch (e) { if (i >= 2) throw e; await new Promise(r => setTimeout(r, 1500 * (i + 1))); }
+    }
   }
   for (let i = 0; i < 3; i++) {
-    const res = await fetch(CONFIG.API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action, test: CONFIG.TEST_ID }, payload, auth)), redirect: 'follow' });
-    const j = await res.json(); if (!(j && j.error === 'busy')) return j;
+    let j; try { const res = await fetch(CONFIG.API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action, test: CONFIG.TEST_ID }, payload, auth)), redirect: 'follow' }); j = await res.json(); }
+    catch (e) { if (i >= 2) throw e; await new Promise(r => setTimeout(r, 2000 * (i + 1))); continue; }
+    if (!(j && j.error === 'busy')) return j;
     await new Promise(r => setTimeout(r, 4000 + Math.random() * 12000));
   }
   return { ok: false, error: 'busy' };
@@ -1813,7 +1816,7 @@ function essayHtml(text, st, onlyP, selKey) {
 function issuesHtml(st, onlyP, selKey) {
   const L = orderIssues(st).filter(x => !onlyP || x.a.p);
   if (!L.length) return '<p class="muted small" style="margin-top:8px">No issues listed.</p>';
-  return `<ol class="iss-list">${L.map(x => { const a = x.a, key = x.kind + x.i; return `<li data-key="${key}" class="${selKey === key ? 'sel' : ''}"><span class="n c-${a.c}">${x.n}</span><span>${x.kind === 'a' ? `<span class="q">“${esc(a.q)}”</span> – ` : ''}${esc(a.m)}${a.f ? ` <span class="fx">→ ${esc(a.f)}</span>` : ''}</span><span class="cat">${CAT[a.c]}${a.p ? '' : ' · minor'}</span></li>`; }).join('')}</ol>`;
+  return `<ol class="iss-list">${L.map(x => { const a = x.a, key = x.kind + x.i; return `<li data-key="${key}" class="${selKey === key ? 'sel' : ''}"><span class="n c-${a.c}">${x.n}</span><span>${x.kind === 'a' ? `<span class="q">“${esc(a.q)}”</span> – ` : ''}${esc(a.m)}${a.f ? ` <span class="fx">→ ${esc(a.f)}</span>` : ''}</span><span class="cat">${CAT[a.c]}${a.p ? '' : ' · minor'}${a.ai && RV && RV.mode === 'teacher' ? ' · AI' : ''}</span></li>`; }).join('')}</ol>`;
 }
 function lessonHtml(id, mode) {
   const L = LESSONS[id] || LESSONS['t-frame'];
@@ -1875,10 +1878,10 @@ function openMachine(m) {
 function stFromFeedback(fbW1, general) {
   let o = null; try { o = JSON.parse(fbW1 || ''); } catch (e) {}
   if (!o || !o.b) return null;
-  return { bands: o.b, comment: o.cm || general || '', strengths: o.s || [], improve: o.i || [], lesson: o.l || 't-frame', ann: (o.a || []).map(a => ({ s: a[0], e: a[1], c: a[2], m: a[3], f: a[4] || '', p: a[5] ? 1 : 0, q: a[6] || '' })), other: (o.o || []).map(a => ({ c: a[0], m: a[1], f: a[2] || '', p: a[3] ? 1 : 0 })), gate: o.g || [] };
+  return { bands: o.b, comment: o.cm || general || '', strengths: o.s || [], improve: o.i || [], lesson: o.l || 't-frame', ann: (o.a || []).map(a => ({ s: a[0], e: a[1], c: a[2], m: a[3], f: a[4] || '', p: a[5] ? 1 : 0, q: a[6] || '', ai: a[7] ? 1 : 0 })), other: (o.o || []).map(a => ({ c: a[0], m: a[1], f: a[2] || '', p: a[3] ? 1 : 0, ai: a[4] ? 1 : 0 })), gate: o.g || [] };
 }
 function packFeedback(st) {
-  const o = { v: 1, b: st.bands, cm: st.comment.slice(0, 500), s: st.strengths.slice(0, 8).map(x => x.slice(0, 200)), i: st.improve.slice(0, 8).map(x => x.slice(0, 200)), l: st.lesson, a: st.ann.map(a => [a.s, a.e, a.c, a.m.slice(0, 140), (a.f || '').slice(0, 80), a.p ? 1 : 0, (a.q || '').slice(0, 40)]), o: st.other.map(a => [a.c, a.m.slice(0, 180), (a.f || '').slice(0, 80), a.p ? 1 : 0]), g: st.gate || [] };
+  const o = { v: 1, b: st.bands, cm: st.comment.slice(0, 500), s: st.strengths.slice(0, 8).map(x => x.slice(0, 200)), i: st.improve.slice(0, 8).map(x => x.slice(0, 200)), l: st.lesson, a: st.ann.map(a => [a.s, a.e, a.c, a.m.slice(0, 140), (a.f || '').slice(0, 80), a.p ? 1 : 0, (a.q || '').slice(0, 40), a.ai ? 1 : 0]), o: st.other.map(a => [a.c, a.m.slice(0, 180), (a.f || '').slice(0, 80), a.p ? 1 : 0, a.ai ? 1 : 0]), g: st.gate || [] };
   let s = JSON.stringify(o);
   while (s.length > 5900 && o.a.length) { const i = o.a.findIndex(x => !x[5]); o.a.splice(i >= 0 ? i : o.a.length - 1, 1); s = JSON.stringify(o); }
   return s;
@@ -1992,15 +1995,42 @@ async function teacherRelease() {
   try { const j = await api('release', { clientId: r.clientId, submittedAt: r.submittedAt, release: on }); if (!j.ok) throw new Error(j.error); r.grading = j.grading; renderSubs(); releaseBtn(); rvStatus(on ? 'Released to the student. ' + (j.warning || '') : 'Withdrawn: the student no longer sees it.', 'ok'); }
   catch (e) { rvStatus('Could not change: ' + (e.message || 'error'), 'err'); }
 }
+const AI_CAT = { grammar: 'GRA', spelling: 'VOC', vocabulary: 'VOC', register: 'VOC', organization: 'ORG', task: 'TF' };
+const AI_LAB = { grammar: 'Grammar', spelling: 'Spelling', vocabulary: 'Word choice', register: 'Register', organization: 'Organization', task: 'Task' };
+function findQuote(text, q, taken) {       // exact → case-insensitive → whitespace/quote-tolerant; skip spots already used
+  const tries = [];
+  let i = -1; while ((i = text.indexOf(q, i + 1)) >= 0) tries.push([i, i + q.length]);
+  if (!tries.length) { const lo = text.toLowerCase(), ql = q.toLowerCase(); i = -1; while ((i = lo.indexOf(ql, i + 1)) >= 0) tries.push([i, i + q.length]); }
+  if (!tries.length) { const pat = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/['’‘]/g, "['’‘]").replace(/\s+/g, '\\s+'); try { const re = new RegExp(pat, 'gi'); let m; while ((m = re.exec(text))) tries.push([m.index, m.index + m[0].length]); } catch (e) {} }
+  return tries.find(([a, b]) => !taken.some(t => a < t.e && b > t.s)) || null;
+}
+function addAiIssues(list) {
+  const text = RV.text, st = RV.st; let placed = 0, general = 0, dup = 0;
+  (list || []).forEach(x => {
+    const c = AI_CAT[x.type] || 'GRA', m = ((AI_LAB[x.type] || 'Grammar') + ': ' + (x.message || '')).slice(0, 180), f = String(x.fix || '').slice(0, 80);
+    const hit = findQuote(text, String(x.quote || ''), []);
+    if (hit) {
+      const [s0, e0] = hit, over = st.ann.find(a => s0 < a.e && e0 > a.s);
+      if (over) { dup++; if (!over.ai && f && !over.f) over.f = f; return; }   // the machine check already marks this spot
+      st.ann.push({ s: s0, e: e0, c, m, f, p: 1, q: text.slice(s0, e0).slice(0, 60), ai: 1 }); placed++;
+    } else { st.other.push({ c, m: ('“' + String(x.quote).slice(0, 50) + '” – ' + m).slice(0, 180), f, p: 1, ai: 1 }); general++; }
+  });
+  st.ann.sort((a, b) => a.s - b.s);
+  return { placed, general, dup };
+}
 async function teacherAi() {
-  const r = RV.row, p = RV.p, btn = $('#rv-ai'); btn.disabled = true; rvStatus('Asking the AI for a band suggestion…');
+  const r = RV.row, p = RV.p, btn = $('#rv-ai'); btn.disabled = true; rvStatus('Asking the AI for marks and a list of errors… (up to about 30 seconds)');
   try {
-    const j = await api('ai_grade', { clientId: r.clientId, submittedAt: r.submittedAt, context: { W1: { situation: p.situation, email: p.email ? [p.email] : [], instruction: p.instruction, points: p.points, minWords: 120 } } });
+    const j = await api('ai_grade', { clientId: r.clientId, submittedAt: r.submittedAt, context: { issues: true, W1: { situation: p.situation, email: p.email ? [p.email] : [], instruction: p.instruction, points: p.points, minWords: 120 } } });
     if (!j.ok) throw new Error(j.error); const a = j.ai && j.ai.W1; if (!a) throw new Error('no result');
     CATS.forEach(c => { const v = a.criteria && a.criteria[CRIT_KEY[c]]; if (typeof v === 'number') RV.st.bands[c] = clamp(half(v * 4), 0, 10); });
     const note = '[AI suggestion · band ' + a.band + '/10] ' + a.note;
     if (!RV.st.comment.trim() || await ask('Replace the overall comment with the AI note?', 'Replace')) RV.st.comment = note.slice(0, 500);
-    renderReview(); touched(); rvStatus('AI suggestion filled in – check it, then Save draft or Approve & release.', 'ok');
+    const had = RV.st.ann.some(x => x.ai) || RV.st.other.some(x => x.ai);
+    if (had && Array.isArray(a.issues) && await ask('Remove the AI errors added last time before adding the new list?', 'Replace them')) { RV.st.ann = RV.st.ann.filter(x => !x.ai); RV.st.other = RV.st.other.filter(x => !x.ai); }
+    const res = Array.isArray(a.issues) ? addAiIssues(a.issues) : null;
+    renderReview(); touched();
+    rvStatus(res ? `AI filled in the 4 marks and the comment, and marked ${res.placed} error${res.placed === 1 ? '' : 's'} in the text` + (res.general ? `, ${res.general} more listed below the text (words not found exactly)` : '') + (res.dup ? `; ${res.dup} already marked by the machine check` : '') + ' – check them, then Save draft or Approve & release.' : 'AI suggestion filled in – check it, then Save draft or Approve & release.', 'ok');
   } catch (e) { rvStatus('AI suggestion not available: ' + (e.message || 'error'), 'err'); }
   finally { const b = $('#rv-ai'); if (b) b.disabled = false; }
 }

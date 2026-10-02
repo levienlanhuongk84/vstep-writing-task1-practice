@@ -2308,12 +2308,28 @@ $('#subs-tbl').addEventListener('click', async e => {
 });
 $('#btn-clear-all').addEventListener('click', async () => { if (!(await ask('Delete ALL emails and marks for this practice? This cannot be undone.', 'Delete all'))) return; const j = await api('clear'); if (!j.ok) { alert('Could not delete: ' + (j.error || 'error')); return; } loadSubs(); });
 $('#btn-subs-csv').addEventListener('click', () => {
-  const q = v => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
-  const head = ['Submitted', 'Name', 'Class', 'Prompt', 'Type', 'Analysis correct', 'Analysis total', 'Words', 'Time (min)', 'Task 1 mark', 'Task fulfilment', 'Organization', 'Vocabulary', 'Grammar', 'Status', 'Overall comment', 'Email'];
-  const lines = [head.map(q).join(',')].concat(filteredSubs().map(r => { const g = r.grading || {}, st = g.gradedAt ? stFromFeedback((g.feedback || {}).W1, (g.feedback || {}).general) : null, b = st ? st.bands : {};
-    return [fmtDate(r.submittedAt), r.name, r.sid, r.pid, PROMPTS[r.pid].type, r.correct, r.total, r.words, (r.timeSec / 60).toFixed(1), g.gradedAt ? g.overall : '', b.TF, b.ORG, b.VOC, b.GRA, gstate(r), st ? st.comment : '', (r.writing || {}).W1 || ''].map(q).join(','); }));
+  // one row per email in the current filter, with everything the teacher needs offline: analysis per step, marks, comments, numbered issues, release, Doc, the email itself
+  const q = v => { let x = String(v === null || v === undefined ? '' : v); if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; return '"' + x.replace(/"/g, '""') + '"'; };
+  const iso = v => { const d = v ? new Date(v) : null; if (!d || isNaN(d)) return ''; const z = n => String(n).padStart(2, '0'); return z(d.getDate()) + '/' + z(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + z(d.getHours()) + ':' + z(d.getMinutes()); };
+  const head = ['Submitted', 'Name', 'Class / ID', 'Assigned class', 'Prompt', 'Prompt title', 'Type', 'Register', 'Mode', 'Auto-submitted (time up)', 'Time (min)', 'Words',
+    'Analysis correct', 'Analysis total'].concat(STEPS.slice(0, 5).map((x, i) => 'Step ' + (i + 1) + ' · ' + x.t)).concat(['Status', 'Graded by', 'Graded at', 'Task 1 mark', 'Task fulfilment', 'Organization', 'Vocabulary', 'Grammar',
+    'Overall comment', 'Strengths', 'Priorities', 'Suggested lesson', 'Issues (count)', 'Issues (numbered)', 'Released at', 'Google Doc', 'Email']);
+  const L = filteredSubs();
+  const lines = [head.map(q).join(',')].concat(L.map(r => {
+    const g = r.grading || {}, st = g.gradedAt ? stFromFeedback((g.feedback || {}).W1, (g.feedback || {}).general) : null, b = st ? st.bands : {}, p = PROMPTS[r.pid], text = (r.writing || {}).W1 || '';
+    const ok = {}; (r.answers || []).forEach(a => { if (a && a.k) ok[a.k] = !!a.ok; });
+    const steps = STEPS.slice(0, 5).map(x => x.items.filter(k => ok[k]).length + '/' + x.items.length);
+    const IL = st ? orderIssues(st) : [];      // same numbering as the review screen
+    const iss = IL.map(x => { const a = x.a; return x.n + '. [' + (CAT[a.c] || a.c) + (a.p ? '' : ' · minor') + (a.ai ? ' · AI' : '') + '] ' + (x.kind === 'a' ? '"' + (text.slice(a.s, a.e) || a.q || '') + '" – ' : '') + a.m + (a.f ? ' → ' + a.f : ''); }).join('\n');
+    return [iso(r.submittedAt), r.name, r.sid, r.assign || '', r.pid, p.title, p.type, p.register, r.mode || '', r.auto ? 'yes' : '', (r.timeSec / 60).toFixed(1), r.words,
+      r.correct, r.total].concat(steps).concat([gstate(r), g.gradedBy || '', iso(g.gradedAt), g.gradedAt ? g.overall : '', b.TF, b.ORG, b.VOC, b.GRA,
+      st ? st.comment : '', st ? st.strengths.join('\n') : '', st ? st.improve.join('\n') : '', st && LESSONS[st.lesson] ? LESSONS[st.lesson][0] : '', st ? IL.length : '', iss,
+      g.released ? iso(g.releasedAt) : '', g.docUrl || '', text]).map(q).join(',');
+  }));
+  const tag = [$('#f-class').value, $('#f-type').value && 'type-' + $('#f-type').value, $('#f-status').value].filter(Boolean).join('-');
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = CONFIG.CSV_PREFIX + '-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  a.href = URL.createObjectURL(blob); a.download = CONFIG.CSV_PREFIX + (tag ? '-' + tag.replace(/[^\w-]+/g, '_') : '-all') + '-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  $('#subs-status').textContent = 'CSV: ' + L.length + ' of ' + RAW.length + ' email' + (RAW.length === 1 ? '' : 's') + (L.length < RAW.length ? ' (filtered – clear the filters to export all)' : '');
 });
 
 /* ====================== CONFIRM DIALOG ====================== */

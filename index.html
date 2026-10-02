@@ -1057,7 +1057,7 @@ const fmtDate = x => { const d = new Date(x); return isNaN(d) ? '—' : pad(d.ge
 const hhmm = d => pad(d.getHours()) + ':' + pad(d.getMinutes());
 const rnd = n => { try { return Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return Array.from({ length: n * 2 }, () => (Math.random() * 16 | 0).toString(16)).join(''); } };
 const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-const normClass = s => String(s || '').trim().replace(/\s+/g, ' ').toUpperCase();
+const normClass = s => String(s || '').trim().replace(/\s*[-–—]\s*/g, '-').replace(/\s+/g, ' ').toUpperCase();
 const half = x => Math.round(x * 2) / 2;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const f1 = x => (x === null || x === undefined || isNaN(+x)) ? '—' : (+x).toFixed(1);
@@ -2181,7 +2181,11 @@ let REP = [];
 const promptOf = r => { const m = (r.answers || [])[0] || {}; return PROMPTS[m.p] ? m.p : (PROMPTS[r.assign] ? r.assign : ''); };
 function cleanRows(rows) {
   const seen = new Set();
-  return (rows || []).filter(r => r && r.name && promptOf(r)).map(r => Object.assign({}, r, { sid: normClass(r.sid), correct: +r.correct || 0, total: +r.total || ITEM_KEYS.length, words: +(r.wwords && r.wwords.W1) || 0, timeSec: +r.timeSec || 0, pid: promptOf(r) }))
+  // students type the same class many ways ("CK1-51", "CK1 - 51", "ck1 51"): group by letters+digits only, show the most used spelling
+  const key = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, ''), freq = {}, canon = {};
+  (rows || []).forEach(r => { if (!r) return; const c = normClass(r.sid), k = key(c); freq[k] = freq[k] || {}; freq[k][c] = (freq[k][c] || 0) + 1; });
+  Object.keys(freq).forEach(k => { canon[k] = Object.keys(freq[k]).sort((a, b) => freq[k][b] - freq[k][a] || (b.includes('-') - a.includes('-')) || a.localeCompare(b))[0]; });
+  return (rows || []).filter(r => r && r.name && promptOf(r)).map(r => Object.assign({}, r, { sid: canon[key(normClass(r.sid))] || normClass(r.sid), correct: +r.correct || 0, total: +r.total || ITEM_KEYS.length, words: +(r.wwords && r.wwords.W1) || 0, timeSec: +r.timeSec || 0, pid: promptOf(r) }))
     .filter(r => { const k = r.clientId + '|' + r.submittedAt; if (seen.has(k)) return false; seen.add(k); return true; })
     .sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)));
 }

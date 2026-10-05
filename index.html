@@ -997,7 +997,7 @@
         <select class="sel" id="f-status" aria-label="Status"><option value="">Any status</option><option value="new">Not marked</option><option value="draft">Draft</option><option value="sent">Released</option></select>
         <span class="muted small" id="subs-status"></span>
         <span style="flex:1"></span>
-        <button class="btn" id="btn-subs-refresh">Refresh</button><button class="btn" id="btn-subs-csv">Download CSV</button><button class="btn danger" id="btn-clear-all" hidden>Delete all results</button>
+        <button class="btn accent" id="btn-ai-all" disabled>✦ AI draft all</button><button class="btn" id="btn-subs-refresh">Refresh</button><button class="btn" id="btn-subs-csv">Download CSV</button><button class="btn danger" id="btn-clear-all" hidden>Delete all results</button>
       </div>
       <div class="tablewrap"><table class="tbl" id="subs-tbl"><thead><tr><th>Submitted</th><th>Name</th><th>Class / ID</th><th>Prompt</th><th class="n">Analysis</th><th class="n">Words</th><th class="n">Time</th><th>Mark</th><th></th></tr></thead><tbody></tbody></table></div>
     </section>
@@ -2061,10 +2061,10 @@ $('#add-iss').addEventListener('click', () => {
   RV.sel = 'a' + RV.st.ann.findIndex(a => a.s === s && a.e === e2); window.getSelection().removeAllRanges();
   paintEssay(); openEditor(RV.sel); touched();
 });
-function gradePayload() {
-  const st = RV.st, mark = half(CATS.reduce((a, c) => a + (+st.bands[c] || 0), 0) / 4), crit = {};
+function gradePayload(row = RV.row, st = RV.st) {
+  const mark = half(CATS.reduce((a, c) => a + (+st.bands[c] || 0), 0) / 4), crit = {};
   CATS.forEach(c => { crit[CRIT_KEY[c]] = Math.round(st.bands[c] / 4 * 4) / 4; });
-  return { clientId: RV.row.clientId, submittedAt: RV.row.submittedAt, marks: { W1: mark }, criteria: { W1: crit }, feedback: { W1: packFeedback(st), general: st.comment } };
+  return { clientId: row.clientId, submittedAt: row.submittedAt, marks: { W1: mark }, criteria: { W1: crit }, feedback: { W1: packFeedback(st), general: st.comment } };
 }
 async function teacherSave(quiet) {
   const r = RV.row; rvStatus('Saving to the class sheet…');
@@ -2089,8 +2089,8 @@ function findQuote(text, q, taken) {       // exact → case-insensitive → whi
   if (!tries.length) { const pat = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/['’‘]/g, "['’‘]").replace(/\s+/g, '\\s+'); try { const re = new RegExp(pat, 'gi'); let m; while ((m = re.exec(text))) tries.push([m.index, m.index + m[0].length]); } catch (e) {} }
   return tries.find(([a, b]) => !taken.some(t => a < t.e && b > t.s)) || null;
 }
-function addAiIssues(list) {
-  const text = RV.text, st = RV.st; let placed = 0, general = 0, dup = 0;
+function addAiIssues(list, text = RV.text, st = RV.st) {
+  let placed = 0, general = 0, dup = 0;
   (list || []).forEach(x => {
     const c = AI_CAT[x.type] || 'GRA', m = ((AI_LAB[x.type] || 'Grammar') + ': ' + (x.message || '')).slice(0, 180), f = String(x.fix || '').slice(0, 80);
     const hit = findQuote(text, String(x.quote || ''), []);
@@ -2103,10 +2103,11 @@ function addAiIssues(list) {
   st.ann.sort((a, b) => a.s - b.s);
   return { placed, general, dup };
 }
+const aiReq = (r, p) => ({ clientId: r.clientId, submittedAt: r.submittedAt, context: { issues: true, W1: { situation: p.situation, email: p.email ? [p.email] : [], instruction: p.instruction, points: p.points, minWords: 120 } } });
 async function teacherAi() {
   const r = RV.row, p = RV.p, btn = $('#rv-ai'); btn.disabled = true; rvStatus('Asking the AI for marks and a list of errors… (up to about 30 seconds)');
   try {
-    const j = await api('ai_grade', { clientId: r.clientId, submittedAt: r.submittedAt, context: { issues: true, W1: { situation: p.situation, email: p.email ? [p.email] : [], instruction: p.instruction, points: p.points, minWords: 120 } } });
+    const j = await api('ai_grade', aiReq(r, p));
     if (!j.ok) throw new Error(j.error); const a = j.ai && j.ai.W1; if (!a) throw new Error('no result');
     CATS.forEach(c => { const v = a.criteria && a.criteria[CRIT_KEY[c]]; if (typeof v === 'number') RV.st.bands[c] = clamp(half(v * 4), 0, 10); });
     const note = '[AI suggestion · band ' + a.band + '/10] ' + a.note;
@@ -2119,6 +2120,53 @@ async function teacherAi() {
   } catch (e) { rvStatus('AI suggestion not available: ' + (e.message || 'error'), 'err'); }
   finally { const b = $('#rv-ai'); if (b) b.disabled = false; }
 }
+/* ---------- AI draft for many emails at once (Admin tab): machine check + AI marks/comment/errors, saved as a DRAFT, never released ---------- */
+let BATCH = null;
+function batchTargets() { return filteredSubs().filter(r => gstate(r) === 'new' && !store.get(draftKey(r), null)); }
+function batchBtn() {
+  const b = $('#btn-ai-all'); if (!b) return;
+  if (BATCH) { b.textContent = '■ Stop AI drafting'; b.disabled = false; return; }
+  const n = batchTargets().length; b.textContent = '✦ AI draft all (' + n + ')'; b.disabled = !n;
+  b.title = n ? 'Let the AI mark every not-marked email in the current filter and save each one as a draft (nothing is released)' : 'No not-marked emails in the current filter';
+}
+async function aiDraftOne(r) {
+  const meta = (r.answers || [])[0] || {}, p = PROMPTS[meta.p || r.assign]; if (!p) throw new Error('unknown prompt');
+  const text = (r.writing && r.writing.W1) || '', mr = machineReview(text, p);
+  const st = { bands: mr.bands, comment: mr.comment, strengths: mr.strengths, improve: mr.improve, lesson: mr.lesson, ann: mr.ann, other: mr.other, gate: [] };
+  let j = null;
+  for (let t = 0; t < 3; t++) {                      // the free AI quota answers "busy" now and then: wait and try again
+    j = await api('ai_grade', aiReq(r, p));
+    if (j.ok || !/429|503|quá tải|busy|quota/i.test(j.error || '')) break;
+    await new Promise(res => setTimeout(res, 20000 * (t + 1)));
+    if (!BATCH) return 'stopped';
+  }
+  if (!j.ok) throw new Error(j.error || 'AI error');
+  const a = j.ai && j.ai.W1; if (!a) throw new Error('no AI result');
+  CATS.forEach(c => { const v = a.criteria && a.criteria[CRIT_KEY[c]]; if (typeof v === 'number') st.bands[c] = clamp(half(v * 4), 0, 10); });
+  st.comment = ('[AI draft · band ' + a.band + '/10] ' + (a.note || '')).slice(0, 500);
+  const res = Array.isArray(a.issues) ? addAiIssues(a.issues, text, st) : { placed: 0, general: 0 };
+  const g = await api('grade', gradePayload(r, st)); if (!g.ok) throw new Error(g.error || 'save failed');
+  r.grading = g.grading; return res.placed + res.general;
+}
+async function aiDraftAll() {
+  if (BATCH) { BATCH.stop = true; BATCH = null; batchBtn(); return; }
+  const L = batchTargets(); if (!L.length) return;
+  const mins = Math.ceil(L.length * 12 / 60);
+  if (!(await ask(`Let the AI draft marks, a comment and an error list for ${L.length} not-marked email${L.length === 1 ? '' : 's'} in the current filter? Each one is saved as a DRAFT – nothing is released to students. Takes about ${mins} minute${mins === 1 ? '' : 's'}; keep this tab open. Emails you have already started on this device are skipped.`, 'Start'))) return;
+  BATCH = { stop: false }; const me = BATCH; batchBtn();
+  let ok = 0, fail = 0, iss = 0; const errs = [];
+  for (let i = 0; i < L.length; i++) {
+    if (me.stop) break;
+    me.msg = `AI drafting ${i + 1} of ${L.length}: ${L[i].name}… (${ok} done${fail ? ', ' + fail + ' failed' : ''}) – keep this tab open`; $('#subs-status').textContent = me.msg;
+    try { const n = await aiDraftOne(L[i]); if (n === 'stopped') break; ok++; iss += n; renderSubs(); }
+    catch (e) { fail++; errs.push(L[i].name + ': ' + (e.message || 'error')); }
+    if (i < L.length - 1 && !me.stop) await new Promise(res => setTimeout(res, 1500));
+  }
+  const stopped = me.stop; BATCH = null; renderSubs(); batchBtn();
+  $('#subs-status').textContent = `AI drafts ${stopped ? 'stopped' : 'finished'}: ${ok} saved as draft (${iss} errors marked)` + (fail ? `, ${fail} failed – run again later for those` : '') + '. Open each one, check it, then Approve & release.';
+  if (errs.length) console.warn('AI draft failures', errs);
+}
+$('#btn-ai-all').addEventListener('click', aiDraftAll);
 async function teacherDoc() {
   if (!(await teacherSave(true))) return;
   const r = RV.row, st = RV.st, p = RV.p, g = r.grading || {};
@@ -2297,8 +2345,8 @@ async function loadSubs() {
 const gstate = r => { const g = r.grading; return !g || !g.gradedAt ? 'new' : g.released ? 'sent' : 'draft'; };
 function filteredSubs() { const c = $('#f-class').value, t = $('#f-type').value, s = $('#f-status').value; return RAW.filter(r => (!c || r.sid === c) && (!t || PROMPTS[r.pid].type === t) && (!s || gstate(r) === s)); }
 function renderSubs() {
-  if (!$('#subs-tbl')) return; const L = filteredSubs(), adm = isAdmin();
-  $('#subs-status').textContent = L.length + ' of ' + RAW.length + ' email' + (RAW.length === 1 ? '' : 's');
+  batchBtn(); if (!$('#subs-tbl')) return; const L = filteredSubs(), adm = isAdmin();
+  $('#subs-status').textContent = BATCH && BATCH.msg ? BATCH.msg : L.length + ' of ' + RAW.length + ' email' + (RAW.length === 1 ? '' : 's');
   $('#subs-tbl tbody').innerHTML = L.length ? L.map(r => { const i = RAW.indexOf(r), g = r.grading || {}, s = gstate(r);
     return `<tr><td>${fmtDate(r.submittedAt)}${r.auto ? ' <span class="att">time up</span>' : ''}${r.mode === 'exam' ? ' <span class="att">assigned</span>' : ''}</td><td>${esc(r.name)}</td><td>${esc(r.sid)}</td><td class="wrap" style="min-width:150px">${esc(r.pid)} <span class="muted small">${esc(PROMPTS[r.pid].title)}</span></td><td class="n">${r.correct}/${r.total}</td><td class="n">${r.words}</td><td class="n">${mmss(r.timeSec)}</td><td>${s === 'new' ? '<span class="chip mu">not marked</span>' : `<b>${f1(g.overall)}</b> <span class="chip ${s === 'sent' ? 'g' : 'o'}">${s === 'sent' ? 'released' : 'draft'}</span>`}</td><td><div class="row" style="flex-wrap:nowrap"><button class="btn primary small" data-review="${i}">Review</button>${adm ? `<button class="btn danger small" data-del="${i}">Delete</button>` : ''}</div></td></tr>`; }).join('') : '<tr><td colspan="9" class="empty">No emails match.</td></tr>';
 }

@@ -811,7 +811,38 @@
     <h2>Before you start</h2>
     <div class="two">
       <div class="field"><label for="f-name">Full name <span class="req">*</span></label><input id="f-name" autocomplete="name" placeholder="e.g. Nguyen Van A" maxlength="80"></div>
-      <div class="field"><label for="f-sid">Class / ID <span class="req">*</span></label><input id="f-sid" placeholder="e.g. CH35" maxlength="40"></div>
+      <div class="field"><label for="f-sid">Class / ID <span class="req">*</span></label><select id="f-sid" class="sel lh-class" aria-label="Class"><option value="">— Choose your class —</option><option>CK1-51</option><option>CH-35</option></select>
+<script>
+/* LH class picker (2026-10-06): the class is CHOSEN from the list kept in the "Danh sách lớp" tab of "Sổ bài nộp SĐH 2026"
+   (served by its web app), so every page records the same codes. Falls back to the list above when offline.
+   Same id as the old text box: page code that reads .value / listens to 'input' keeps working. */
+(function () {
+  var URL = 'https://script.google.com/macros/s/AKfycbwcPyg1i2cVPMFU97a_mGbIum3tIliW_UTqUI3akdEQdRNaxgw1bxY5ysnEEi8MaMW9/exec?action=classes';
+  var sel = document.getElementById('f-sid'), base = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value'), want = '';
+  if (!document.getElementById('lh-class-css')) { var st = document.createElement('style'); st.id = 'lh-class-css';
+    st.textContent = '.field select.lh-class{font:inherit;font-size:16px;padding:11px 12px;border:1px solid var(--line-strong,#ccc);border-radius:10px;background:var(--surface,#fff);color:var(--ink,#222);width:100%}';
+    document.head.appendChild(st); }
+  function canon(v) { var s = String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(), m = s.match(/(CK\s*[12]|CH)\s*[-_.\s]*\s*(\d{1,3})/); return m ? m[1].replace(/\s+/g, '') + '-' + m[2] : String(v || '').trim(); }
+  function has(v) { for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === v) return true; return false; }
+  function pick(v) {                                   // a saved or programmatic value: use the matching listed class, else keep it as its own option
+    v = String(v || '').trim(); want = v; if (!v) { base.set.call(sel, ''); return; }
+    var c = canon(v); if (has(c)) { base.set.call(sel, c); return; }
+    if (!has(v)) { var o = document.createElement('option'); o.value = o.textContent = v; o.setAttribute('data-extra', '1'); sel.appendChild(o); }
+    base.set.call(sel, v);
+  }
+  Object.defineProperty(sel, 'value', { configurable: true, get: function () { return base.get.call(this); }, set: pick });
+  function fill(list) {
+    var cur = base.get.call(sel) || want; while (sel.options.length > 1) sel.remove(1);
+    list.forEach(function (c) { var o = document.createElement('option'); o.value = o.textContent = c.code || c; sel.appendChild(o); });
+    if (cur) pick(cur);
+  }
+  try { var cached = JSON.parse(localStorage.getItem('lh-classes') || 'null'); if (cached && cached.length) fill(cached); } catch (e) {}
+  fetch(URL).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.ok && j.classes && j.classes.length) { try { localStorage.setItem('lh-classes', JSON.stringify(j.classes)); } catch (e) {} fill(j.classes); }
+  }).catch(function () {});
+})();
+</script>
+</div>
     </div>
     <h3>What to practise</h3>
     <div class="skills" id="type-pick"></div>
@@ -1540,7 +1571,7 @@ function renderPicker() {
   if (!SET_READY) { $('#type-pick').innerHTML = '<p class="muted" style="grid-column:1/-1">Loading the class settings…</p>'; $('#pick-summary').textContent = ''; $('#btn-start').disabled = true; return; }
   const asg = curAsg(), allow = allowedIds(asg);
   if (asg === 'closed') {
-    $('#type-pick').innerHTML = `<div class="note bad" style="grid-column:1/-1"><span class="tag">Not assigned</span><p>${$('#f-sid').value.trim() ? 'This practice is not assigned to your Class / ID. Check the code with your teacher.' : 'Type your Class / ID to see the prompts assigned to your class.'}</p></div>`;
+    $('#type-pick').innerHTML = `<div class="note bad" style="grid-column:1/-1"><span class="tag">Not assigned</span><p>${$('#f-sid').value.trim() ? 'This practice is not assigned to your Class / ID. Check the code with your teacher.' : 'Choose your class to see the prompts assigned to it.'}</p></div>`;
     $('#pick-summary').textContent = ''; $('#btn-start').textContent = 'Start'; $('#btn-start').disabled = true; return;
   }
   $('#btn-start').disabled = !SET.open;
@@ -1563,7 +1594,7 @@ let pickDeb = null;
 $('#btn-start').addEventListener('click', () => {
   const name = $('#f-name').value.trim().replace(/\s+/g, ' '), sid = normClass($('#f-sid').value);
   if (name.length < 2) { startErr('Type your full name.'); $('#f-name').focus(); return; }
-  if (!sid) { startErr('Type your class / ID.'); $('#f-sid').focus(); return; }
+  if (!sid) { startErr('Choose your class.'); $('#f-sid').focus(); return; }
   const asg = assignmentFor(sid);
   if (asg === 'closed') { startErr('This practice is not assigned to your Class / ID.'); return; }
   if (!SEL || !allowedIds(asg).includes(SEL)) { startErr('Choose a prompt.'); return; }

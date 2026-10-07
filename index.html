@@ -748,6 +748,10 @@
     .ws-bar.typing .ws-brief .bi, .ws-bar.typing .ws-brief ol { display: none; }
     .ws-bar.typing .ws-brief .bl { display: flex; }
   }
+  /* per-step countdown (steps 1–6) */
+  .steptmr { display: inline-block; margin-left: 8px; font: 700 .8em var(--font-mono); color: var(--purple-ink); background: var(--purple-soft); border-radius: 999px; padding: 2px 10px; vertical-align: middle; font-variant-numeric: tabular-nums; }
+  .steptmr.warn { color: var(--orange-ink); background: var(--orange-soft); }
+  .steptmr.over { color: var(--bad); background: var(--bad-soft); }
 
   /* ===== LH Master Hero — background art taken from the approved mock (logo, glow, ribbons fixed); only eyebrow / title / 3 chips change.
      Geometry measured on the mock at 1997×277 px: 1 mock px = 0.050075cqw. ===== */
@@ -1531,12 +1535,37 @@ async function refreshSettings() { try { const j = await api('settings'); if (j.
   if (CONFIG.API_URL) setTimeout(refreshSettings, SET_READY ? 60000 : 6000 + Math.random() * 6000); }
 
 /* ====================== PRACTICE STATE ====================== */
-const freshState = () => ({ step: 0, ans: {}, first: {}, checked: {}, notes: ['', '', ''], text: '', tSec: 0, tRun: 0, submitted: null });
+const freshState = () => ({ step: 0, ans: {}, first: {}, checked: {}, notes: ['', '', ''], text: '', tSec: 0, tRun: 0, submitted: null, stepAt: {}, timeUp: {} });
 const PS = {};
-function st(id) { if (!PS[id]) PS[id] = Object.assign(freshState(), store.get('p:' + id, {})); return PS[id]; }
+function st(id) {
+  if (!PS[id]) { const s = PS[id] = Object.assign(freshState(), store.get('p:' + id, {})); s.stepAt = s.stepAt || {}; s.timeUp = s.timeUp || {};
+    if (s.wStart || s.text || s.submitted) s.checked[5] = true; }   // attempts that reached the writing box before steps were strictly ordered keep their place
+  return PS[id];
+}
 function saveSt(id) { store.set('p:' + id, st(id)); }
 const analysisScore = s => ITEM_KEYS.filter(k => s.first[k]).length;
-const stepOpen = (s, i) => i === 0 || !!s.checked[i - 1] || (i === 6 && [0, 1, 2, 3, 4].every(j => s.checked[j]));
+// the 7 steps open strictly one after another (teacher rule 07/10): steps 1–5 max 3 min each, the outline (step 6) max 4 min, writing time set by the teacher
+const stepOpen = (s, i) => i === 0 || !!s.checked[i - 1];
+const STEP_LIMIT = [180, 180, 180, 180, 180, 240];
+const stepLeft = (s, i) => STEP_LIMIT[i] - (s.stepAt[i] ? (Date.now() - s.stepAt[i]) / 1000 : 0);
+function paintStepTimer(T) {
+  const id = CUR[T]; if (!id) return; const s = st(id), i = s.step, on = i < 6 && !s.checked[i] && !!s.stepAt[i];
+  const left = on ? Math.max(0, stepLeft(s, i)) : 0, cls = left <= 30 ? ' over' : left <= 60 ? ' warn' : '';
+  const el = $('#stmr-' + T); if (el) { el.hidden = !on; el.textContent = '⏱ ' + mmss(left); el.className = 'steptmr' + cls; }
+  const bt = $('#btmr-' + T); if (bt && i < 6) { bt.hidden = !on; if (on) { bt.textContent = '⏱ ' + mmss(left); bt.className = 'bar-tmr' + cls; } }
+}
+function checkStep(T, auto) {      // marks the current dropdown step; on time-out unanswered questions count as wrong
+  const id = CUR[T], p = PROMPTS[id], s = st(id), S = STEPS[s.step];
+  S.items.forEach(k => { s.first[k] = s.ans[k] !== undefined && s.ans[k] !== '' && +s.ans[k] === item(p, k).answer; });
+  if (auto) s.timeUp[s.step] = true;
+  s.checked[s.step] = true; saveSt(id); paintSteps(T); renderStep(T); renderPicker();
+}
+function finishPlan(T, auto) {
+  const id = CUR[T], s = st(id);
+  if (!auto && s.notes.some(n => String(n || '').trim().split(/\s+/).filter(Boolean).length < 2)) return false;
+  if (auto) s.timeUp[5] = true;
+  s.checked[5] = true; saveSt(id); return true;
+}
 let CUR = store.get('cur', {});      // current prompt per type
 const mineList = () => store.get('mine', []);
 
@@ -1643,9 +1672,9 @@ document.addEventListener('focusout', e => { if (e.target.matches && e.target.ma
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $$('.ws-peek:not([hidden])').forEach(pn => peek(pn.id.slice(5), false)); });
 function paintSteps(T) {
   const id = CUR[T], s = st(id);
-  $$('#ws-' + T + ' .steps button').forEach((b, i) => { b.disabled = !stepOpen(s, i); b.classList.toggle('cur', i === s.step); b.classList.toggle('done', i < 5 ? !!s.checked[i] : i === 6 ? !!s.submitted : false); });
+  $$('#ws-' + T + ' .steps button').forEach((b, i) => { b.disabled = !stepOpen(s, i); b.classList.toggle('cur', i === s.step); b.classList.toggle('done', i < 6 ? !!s.checked[i] : !!s.submitted); });
   const cur = $('#ws-' + T + ' .steps button.cur'); if (cur) { const sc = cur.parentElement; sc.scrollLeft = cur.offsetLeft - sc.offsetLeft - (sc.clientWidth - cur.offsetWidth) / 2; }
-  paintTimer(T);
+  paintTimer(T); paintStepTimer(T);
 }
 document.addEventListener('click', e => {
   const b = e.target.closest('.steps button[data-step]'); if (!b || b.disabled) return;
@@ -1659,8 +1688,10 @@ function goStep(T, i) {
 
 function renderStep(T) {
   const id = CUR[T], p = PROMPTS[id], s = st(id), i = s.step, S = STEPS[i], box = $('#stp-' + T);
-  if (!stepOpen(s, i)) { s.step = 0; return renderStep(T); }
-  let h = `<h4>Step ${i + 1} · ${esc(S.t)}</h4><p class="lead">${esc(S.lead)}</p>`;
+  if (!stepOpen(s, i)) { let j = 0; while (j < 6 && s.checked[j]) j++; s.step = j; return renderStep(T); }
+  if (i < 6 && !s.checked[i] && !s.stepAt[i]) { s.stepAt[i] = Date.now(); saveSt(id); }
+  let h = `<h4>Step ${i + 1} · ${esc(S.t)}${i < 6 && !s.checked[i] ? ` <span class="steptmr" id="stmr-${T}"></span>` : ''}</h4><p class="lead">${esc(S.lead)}${i < 5 ? ' <b>Time: 3 minutes.</b>' : i === 5 ? ' <b>Time: 4 minutes.</b>' : ''}</p>`;
+  if (i < 6 && s.timeUp[i]) h += `<div class="note bad" style="margin:0 0 10px"><span class="tag">Time up</span><p>${i < 5 ? 'The 3 minutes ran out – your answers were checked as they were (blank = wrong).' : 'The 4 minutes ran out – you moved on to writing.'}</p></div>`;
   if (S.items) {
     const done = !!s.checked[i];
     h += '<div class="qs">' + S.items.map((k, j) => {
@@ -1673,13 +1704,14 @@ function renderStep(T) {
     h += `<div class="stp-foot"><span class="stp-score">${done ? 'Step score ' + got + '/' + S.items.length + ' · analysis so far ' + analysisScore(s) + '/' + ITEM_KEYS.length : ''}</span><div class="row">${done ? `<button class="btn primary" data-next="${T}">Next: ${esc(STEPS[i + 1].t)} →</button>` : `<button class="btn primary" data-check="${T}">Check step ${i + 1}</button>`}</div></div><div class="status err" hidden><span class="dot"></span><span></span></div>`;
   } else if (i === 5) {
     const ph = k => { const it = item(p, k); return it.options[it.answer]; };
-    h += `<div class="grid-2"><div class="plan-grid">${p.points.map((pt, j) => `<div class="plan-pt"><h5>Point ${j + 1} – ${esc(p.labels[j])}</h5><div class="bullet-ref">${esc(pt)}</div><textarea data-note="${j}" placeholder="Detail + reason, in a few words…">${esc(s.notes[j] || '')}</textarea><button class="btn ghost small" data-ideas>Need an idea?</button><ul class="ideas" hidden>${(p.ideas[j] || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>
+    h += `<div class="grid-2"><div class="plan-grid">${p.points.map((pt, j) => `<div class="plan-pt"><h5>Point ${j + 1} – ${esc(p.labels[j])}</h5><div class="bullet-ref">${esc(pt)}</div><textarea data-note="${j}" placeholder="Detail + reason, in a few words…"${s.checked[5] ? ' readonly' : ''}>${esc(s.notes[j] || '')}</textarea><button class="btn ghost small" data-ideas>Need an idea?</button><ul class="ideas" hidden>${(p.ideas[j] || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>
       <div><div class="frame-sum"><div class="eyebrow" style="margin-bottom:6px">Your frame</div><div><b>Greeting</b>${esc(ph('greeting'))}</div><div><b>Opening</b>${esc(ph('opening'))}</div>${[0, 1, 2].map(j => `<div><b>Point ${j + 1}</b>${esc(ph('ph' + j))}</div>`).join('')}<div><b>Closing</b>${esc(ph('closing'))}</div><div><b>Sign-off</b>${esc(ph('signoff'))}</div></div>
       <p class="vn small" style="margin-top:8px">Adapt these lines to your own ideas – do not copy them word for word.</p></div></div>
-      <div class="stp-foot"><span></span><button class="btn primary" data-next="${T}">Go to writing →</button></div>`;
+      <div class="stp-foot"><span class="muted small">${s.checked[5] ? '' : 'Write a short note (detail + reason) for each point, then go on.'}</span><button class="btn primary" data-next="${T}">Go to writing →</button></div><div class="status err" hidden><span class="dot"></span><span></span></div>`;
   } else h += writeHtml(T, p, s);
   box.innerHTML = h;
   if (i === 6) bindWrite(T);
+  paintStepTimer(T);
 }
 $('main').addEventListener('change', e => {
   const sel = e.target.closest('.qx select[data-k]'); if (!sel) return;
@@ -1695,10 +1727,11 @@ $('main').addEventListener('click', e => {
     const T = c.dataset.check, id = CUR[T], p = PROMPTS[id], s = st(id), S = STEPS[s.step];
     const miss = S.items.filter(k => s.ans[k] === undefined || s.ans[k] === '');
     if (miss.length) { const er = c.closest('.stp').querySelector('.status'); er.hidden = false; er.lastElementChild.textContent = 'Answer every question in this step first (' + miss.length + ' left).'; return; }
-    S.items.forEach(k => { s.first[k] = +s.ans[k] === item(p, k).answer; });
-    s.checked[s.step] = true; saveSt(id); paintSteps(T); renderStep(T); renderPicker(); return;
+    checkStep(T, false); return;
   }
-  const nx = e.target.closest('[data-next]'); if (nx) { const T = nx.dataset.next; goStep(T, st(CUR[T]).step + 1); return; }
+  const nx = e.target.closest('[data-next]'); if (nx) { const T = nx.dataset.next, s = st(CUR[T]);
+    if (s.step === 5 && !s.checked[5] && !finishPlan(T, false)) { const er = nx.closest('.stp').querySelector('.status'); er.hidden = false; er.lastElementChild.textContent = 'Write a note of at least 2 words for each of the 3 points first.'; return; }
+    goStep(T, s.step + 1); return; }
   const idb = e.target.closest('[data-ideas]'); if (idb) { const ul = idb.nextElementSibling; ul.hidden = !ul.hidden; idb.textContent = ul.hidden ? 'Need an idea?' : 'Hide ideas'; }
 });
 
@@ -1744,6 +1777,10 @@ function paintTimer(T) {
   $('[data-tmr]', el).textContent = s.tRun ? 'Pause' : (s.tSec ? 'Resume' : 'Start');
 }
 setInterval(() => TYPES.forEach(T => { const id = CUR[T.id]; if (!id) return; const s = st(id);
+  if (s.step < 6 && !s.checked[s.step] && s.stepAt[s.step] && !$('#pane-' + T.id).hidden) {
+    paintStepTimer(T.id);
+    if (stepLeft(s, s.step) <= 0) { if (s.step < 5) checkStep(T.id, true); else { finishPlan(T.id, true); goStep(T.id, 6); } }
+    return; }
   if (s.asg && s.wStart && !s.submitted) { paintTimer(T.id); if (timeLeft(s) <= 0) submitPrompt(T.id, true); }
   else if (s.tRun) paintTimer(T.id); }), 1000);
 function bindWrite(T) {

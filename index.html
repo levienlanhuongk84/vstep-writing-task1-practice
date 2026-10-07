@@ -1012,9 +1012,8 @@
     <div><span class="eyebrow">Staff only</span><h2 id="staff-title">Teacher &amp; admin</h2><p class="lead" id="staff-lead">Sign in to review emails, adjust the machine check, and release marks and comments to students.</p></div>
   </div>
   <div class="card" id="login-card" style="max-width:520px">
-    <div class="field"><label for="l-name">Name</label><input id="l-name" autocomplete="username"></div>
-    <div class="field" style="margin-top:10px"><label for="l-pass">Password</label><div class="row" style="flex-wrap:nowrap"><input id="l-pass" type="password" class="inp" autocomplete="current-password"><button class="btn ghost" id="btn-pw-toggle" type="button">Show</button></div></div>
-    <label class="row small" style="margin-top:10px"><input type="checkbox" id="l-remember"> Remember me on this device</label>
+    <div class="field"><label for="l-name">Name</label><input id="l-name" autocomplete="off"></div>
+    <div class="field" style="margin-top:10px"><label for="l-pass">Password</label><div class="row" style="flex-wrap:nowrap"><input id="l-pass" type="password" class="inp" autocomplete="new-password"><button class="btn ghost" id="btn-pw-toggle" type="button">Show</button></div></div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="btn-login">Sign in</button></div>
     <div class="status err" id="l-err" hidden><span class="dot"></span><span></span></div>
   </div>
@@ -2294,16 +2293,13 @@ function renderReport() {
 /* ====================== STAFF ====================== */
 let RAW = [];
 function setAuth(a) { A = a; try { a ? sessionStorage.setItem(CONFIG.KEY + ':auth', JSON.stringify(a)) : sessionStorage.removeItem(CONFIG.KEY + ':auth'); } catch (e) {} }
-function remembered() { try { return JSON.parse(localStorage.getItem(CONFIG.KEY + ':remember')); } catch (e) { return null; } }
-function setRemembered(user, password) { try { if (user && password) localStorage.setItem(CONFIG.KEY + ':remember', JSON.stringify({ user, password })); else localStorage.removeItem(CONFIG.KEY + ':remember'); } catch (e) {} }
-(function () { const r = remembered(); if (r) { $('#l-name').value = r.user; $('#l-pass').value = r.password; $('#l-remember').checked = true; } })();
+try { localStorage.removeItem(CONFIG.KEY + ':remember'); } catch (e) {}   /* builds before 2026-10-07 kept the staff name + password here ("Remember me", removed): wipe it, never store it */
 $('#btn-pw-toggle').addEventListener('click', () => { const i = $('#l-pass'), show = i.type === 'password'; i.type = show ? 'text' : 'password'; $('#btn-pw-toggle').textContent = show ? 'Hide' : 'Show'; });
-$('#l-remember').addEventListener('change', () => { if (!$('#l-remember').checked) setRemembered(null, null); });
 $('#btn-login').addEventListener('click', async () => {
   const user = $('#l-name').value.trim(), password = $('#l-pass').value, err = $('#l-err'); err.hidden = true;
   if (!user || !password) { err.hidden = false; err.lastElementChild.textContent = 'Enter your name and password.'; return; }
   $('#btn-login').disabled = true;
-  try { const j = await api('login', { user, password }); if (!j.ok) throw new Error(j.error || 'wrong name or password'); setAuth({ name: j.name || user, role: j.role || 'teacher', password }); if (j.settings) { SET = Object.assign({}, DEFAULT_SET, j.settings); store.set('settings', SET); applySettings(); } setRemembered($('#l-remember').checked ? user : null, $('#l-remember').checked ? password : null); renderStaff(); }
+  try { const j = await api('login', { user, password }); if (!j.ok) throw new Error(j.error || 'wrong name or password'); setAuth({ name: j.name || user, role: j.role || 'teacher', password }); if (j.settings) { SET = Object.assign({}, DEFAULT_SET, j.settings); store.set('settings', SET); applySettings(); } $('#l-pass').value = ''; renderStaff(); }
   catch (e) { err.hidden = false; err.lastElementChild.textContent = 'Sign-in failed: ' + (e.message || 'wrong name or password'); }
   $('#btn-login').disabled = false;
 });

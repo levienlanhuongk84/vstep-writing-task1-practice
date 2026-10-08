@@ -830,16 +830,22 @@
   function has(v) { for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === v) return true; return false; }
   function pick(v) {                                   // a saved or programmatic value: use the matching listed class, else keep it as its own option
     v = String(v || '').trim(); want = v; if (!v) { base.set.call(sel, ''); return; }
+    if (has(v)) { base.set.call(sel, v); return; }      // the exact code first (CH35-0810 stays CH35-0810)
     var c = canon(v); if (has(c)) { base.set.call(sel, c); return; }
     if (!has(v)) { var o = document.createElement('option'); o.value = o.textContent = v; o.setAttribute('data-extra', '1'); sel.appendChild(o); }
     base.set.call(sel, v);
   }
+  sel.addEventListener('change', function () { want = base.get.call(sel); });
   Object.defineProperty(sel, 'value', { configurable: true, get: function () { return base.get.call(this); }, set: pick });
+  var listed = ['CK1-51', 'CH-35'], assigned = [];   // fallback until the class list arrives
   function fill(list) {
-    var cur = base.get.call(sel) || want; while (sel.options.length > 1) sel.remove(1);
-    list.forEach(function (c) { var o = document.createElement('option'); o.value = o.textContent = c.code || c; sel.appendChild(o); });
+    if (list) listed = list.map(function (c) { return String(c.code || c); });
+    var cur = want || base.get.call(sel), seen = {}; while (sel.options.length > 1) sel.remove(1);   // re-pick what the student (or the saved value) asked for
+    assigned.concat(listed).forEach(function (code) { if (!code || seen[code]) return; seen[code] = 1; var o = document.createElement('option'); o.value = o.textContent = code; sel.appendChild(o); });
     if (cur) pick(cur);
   }
+  // class codes the teacher assigns on this page (Admin → Class assignments) appear in the list automatically, first
+  window.lhAddClasses = function (codes) { assigned = (codes || []).map(function (c) { return String(c || '').trim(); }).filter(Boolean); fill(); };
   try { var cached = JSON.parse(localStorage.getItem('lh-classes') || 'null'); if (cached && cached.length) fill(cached); } catch (e) {}
   fetch(URL).then(function (r) { return r.json(); }).then(function (j) {
     if (j && j.ok && j.classes && j.classes.length) { try { localStorage.setItem('lh-classes', JSON.stringify(j.classes)); } catch (e) {} fill(j.classes); }
@@ -1523,6 +1529,7 @@ function localApi(action, p) {       // no class sheet connected: everything sta
 const DEFAULT_SET = { open: true, passMark: CONFIG.PASS_MARK, showRanking: true, message: '' };
 let SET = Object.assign({}, DEFAULT_SET, store.get('settings', {}));
 function applySettings() {
+  if (window.lhAddClasses) window.lhAddClasses((((SET || {}).assign || {}).rows || []).map(r => r.code));   // assigned codes show up in the class list
   const msg = ((SET.open ? '' : 'Submissions are closed at the moment. ') + (SET.message || '')).trim();
   const n = $('#closed-note'); n.hidden = !msg; n.className = 'status' + (SET.open ? '' : ' err'); n.lastElementChild.textContent = msg;
   $$('.btn-submit').forEach(b => b.disabled = !SET.open);

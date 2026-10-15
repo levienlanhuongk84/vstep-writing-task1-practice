@@ -837,15 +837,16 @@
   }
   sel.addEventListener('change', function () { want = base.get.call(sel); });
   Object.defineProperty(sel, 'value', { configurable: true, get: function () { return base.get.call(this); }, set: pick });
-  var listed = ['CK1-51', 'CH-35'], assigned = [];   // fallback until the class list arrives
+  var listed = ['CK1-51', 'CH-35'], assigned = [], onlyAssigned = false;   // fallback until the class list arrives
   function fill(list) {
     if (list) listed = list.map(function (c) { return String(c.code || c); });
     var cur = want || base.get.call(sel), seen = {}; while (sel.options.length > 1) sel.remove(1);   // re-pick what the student (or the saved value) asked for
-    assigned.concat(listed).forEach(function (code) { if (!code || seen[code]) return; seen[code] = 1; var o = document.createElement('option'); o.value = o.textContent = code; sel.appendChild(o); });
-    if (cur) pick(cur);
+    (onlyAssigned && assigned.length ? assigned : assigned.concat(listed)).forEach(function (code) { if (!code || seen[code]) return; seen[code] = 1; var o = document.createElement('option'); o.value = o.textContent = code; sel.appendChild(o); });
+    if (cur) { if (onlyAssigned && assigned.length && !has(cur) && !has(canon(cur))) { want = ''; base.set.call(sel, ''); } else pick(cur); }
   }
   // class codes the teacher assigns on this page (Admin → Class assignments) appear in the list automatically, first
-  window.lhAddClasses = function (codes) { assigned = (codes || []).map(function (c) { return String(c || '').trim(); }).filter(Boolean); fill(); };
+  // only = true when the teacher blocks every other code: then the list shows just the assigned codes (the others could not start anyway)
+  window.lhAddClasses = function (codes, only) { assigned = (codes || []).map(function (c) { return String(c || '').trim(); }).filter(Boolean); onlyAssigned = !!only; fill(); };
   try { var cached = JSON.parse(localStorage.getItem('lh-classes') || 'null'); if (cached && cached.length) fill(cached); } catch (e) {}
   fetch(URL).then(function (r) { return r.json(); }).then(function (j) {
     if (j && j.ok && j.classes && j.classes.length) { try { localStorage.setItem('lh-classes', JSON.stringify(j.classes)); } catch (e) {} fill(j.classes); }
@@ -1529,7 +1530,7 @@ function localApi(action, p) {       // no class sheet connected: everything sta
 const DEFAULT_SET = { open: true, passMark: CONFIG.PASS_MARK, showRanking: true, message: '' };
 let SET = Object.assign({}, DEFAULT_SET, store.get('settings', {}));
 function applySettings() {
-  if (window.lhAddClasses) window.lhAddClasses((((SET || {}).assign || {}).rows || []).map(r => r.code));   // assigned codes show up in the class list
+  if (window.lhAddClasses) { const as = (SET || {}).assign || {}; window.lhAddClasses((as.rows || []).map(r => r.code), as.others !== 'full'); }   // assigned codes show up in the class list; with other codes blocked, only those
   const msg = ((SET.open ? '' : 'Submissions are closed at the moment. ') + (SET.message || '')).trim();
   const n = $('#closed-note'); n.hidden = !msg; n.className = 'status' + (SET.open ? '' : ' err'); n.lastElementChild.textContent = msg;
   $$('.btn-submit').forEach(b => b.disabled = !SET.open);
@@ -2375,7 +2376,7 @@ function asgRow(r) {
     <div class="as-types">${TYPES.map(T => `<div class="as-type"><button type="button" class="as-all" data-type="${T.id}">Type ${T.id}</button>${(DATA[T.id] || []).map(p => `<button type="button" class="as-p${ids.includes(p.id) ? ' on' : ''}" data-id="${p.id}" title="${esc(p.title)}">${p.id}</button>`).join('')}</div>`).join('')}</div></div>`;
 }
 function fillAssign() {
-  const as = SET.assign || {}; $('#as-others').value = as.others === 'full' ? 'full' : 'closed';
+  const as = SET.assign || {}; asgLast = JSON.stringify({ rows: Array.isArray(as.rows) ? as.rows : [], others: as.others === 'full' ? 'full' : 'closed' }); $('#as-others').value = as.others === 'full' ? 'full' : 'closed';
   $('#as-rows').innerHTML = (Array.isArray(as.rows) ? as.rows : []).map(asgRow).join('') || '<p class="muted small as-empty">No class listed yet — every student chooses freely.</p>';
   ASG_DIRTY = false; asgLock();
 }
@@ -2391,22 +2392,39 @@ function collectAssign() {
   const codes = rows.map(r => normCode(r.code)); if (new Set(codes).size !== codes.length) err = 'Two rows have the same class code.';
   return { err, assign: { rows, others: $('#as-others').value } };
 }
-$('#as-add').addEventListener('click', () => { const e = $('#as-rows .as-empty'); if (e) e.remove(); $('#as-rows').insertAdjacentHTML('beforeend', asgRow()); ASG_DIRTY = true; });
+$('#as-add').addEventListener('click', () => { const e = $('#as-rows .as-empty'); if (e) e.remove(); $('#as-rows').insertAdjacentHTML('beforeend', asgRow()); ASG_DIRTY = true; const c = $('#as-rows .as-row:last-child .as-code'); if (c) c.focus(); });
 $('#admin-assign').addEventListener('click', e => {
-  const d = e.target.closest('.as-del'); if (d) { d.closest('.as-row').remove(); ASG_DIRTY = true; return; }
-  const pb = e.target.closest('.as-p'); if (pb) { pb.classList.toggle('on'); ASG_DIRTY = true; return; }
-  const all = e.target.closest('.as-all'); if (all) { const bs = $$('.as-p', all.parentElement), on = !bs.every(b => b.classList.contains('on')); bs.forEach(b => b.classList.toggle('on', on)); ASG_DIRTY = true; }
+  const d = e.target.closest('.as-del'); if (d) { d.closest('.as-row').remove(); asgChanged(); return; }
+  const pb = e.target.closest('.as-p'); if (pb) { pb.classList.toggle('on'); asgChanged(); return; }
+  const all = e.target.closest('.as-all'); if (all) { const bs = $$('.as-p', all.parentElement), on = !bs.every(b => b.classList.contains('on')); bs.forEach(b => b.classList.toggle('on', on)); asgChanged(); }
 });
-$('#admin-assign').addEventListener('input', () => { ASG_DIRTY = true; });
-$('#as-save').addEventListener('click', async () => {
-  const st2 = $('#as-status'), say = (m, k) => { st2.hidden = false; st2.className = 'status' + (k ? ' ' + k : ''); st2.lastElementChild.textContent = m; };
-  const { err, assign } = collectAssign(); if (err) { say(err, 'err'); return; }
-  say('Saving…');
+$('#admin-assign').addEventListener('input', asgChanged);
+$('#admin-assign').addEventListener('change', asgChanged);
+/* auto-save (teacher request 14/10): every change is saved ~1.5 s after the last edit; the status line names the class codes students now see */
+let asgTimer = null, asgBusy = false, asgAgain = false, asgLast = '';
+function asgSay(m, k) { const st2 = $('#as-status'); st2.hidden = false; st2.className = 'status' + (k ? ' ' + k : ''); st2.lastElementChild.textContent = m; }
+function asgChanged() { ASG_DIRTY = true; clearTimeout(asgTimer); asgTimer = setTimeout(() => saveAssign(true), 1500); }
+function asgSummary(rows) {
+  if (!rows.length) return 'No class listed — every student chooses freely.';
+  return rows.map(r => { const ids = Object.keys(r.parts || {}); return `${r.code} → ${ids.join(', ')} · ${r.parts[ids[0]]} min`; }).join('  |  ');
+}
+async function saveAssign(auto) {
+  if (!isAdmin()) return;
+  const { err, assign } = collectAssign();
+  if (err) { asgSay((auto ? 'Not saved yet – ' : '') + err, auto ? '' : 'err'); return; }
+  const key = JSON.stringify(assign); if (auto && key === asgLast) return;
+  if (asgBusy) { asgAgain = true; return; }
+  asgBusy = true; asgSay('Saving…');
   try { const j = await api('save_settings', { settings: { open: SET.open, showRanking: SET.showRanking, passMark: SET.passMark, message: SET.message || '', assign } }); if (!j.ok) throw new Error(j.error);
-    SET = Object.assign({}, DEFAULT_SET, j.settings); store.set('settings', SET); ASG_DIRTY = false; applySettings(); fillAssign();
-    const n = (SET.assign && SET.assign.rows || []).length; say(`Saved: ${n} class${n === 1 ? '' : 'es'}. Students see it the next time they open the page.`, 'ok'); }
-  catch (e) { say('Could not save: ' + (e.message || 'error'), 'err'); }
-});
+    SET = Object.assign({}, DEFAULT_SET, j.settings); store.set('settings', SET); asgLast = key;
+    const typing = auto && $('#admin-assign').contains(document.activeElement);
+    if (typing) applySettings(); else { ASG_DIRTY = false; applySettings(); fillAssign(); }   // never redraw the rows under the teacher's cursor
+    const rows = (SET.assign && SET.assign.rows) || [];
+    asgSay(`✓ Saved ${hhmm(new Date())} — ${asgSummary(rows)}.${rows.length ? ' Students now see ' + rows.map(r => r.code).join(', ') + ' in the Class / ID list.' : ''}`, 'ok'); }
+  catch (e) { asgSay('Could not save: ' + (e.message || 'error') + ' – it will try again on your next change, or press Save assignments.', 'err'); }
+  finally { asgBusy = false; if (asgAgain) { asgAgain = false; saveAssign(true); } }
+}
+$('#as-save').addEventListener('click', () => { clearTimeout(asgTimer); saveAssign(false); });
 
 async function loadSubs() {
   $('#subs-status').textContent = 'Loading…';
